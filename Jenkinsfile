@@ -2,8 +2,8 @@ pipeline {
     agent any
 
     environment {
-        DOCKERHUB_REPO = 'YOUR_DOCKERHUB_USERNAME/aws-simple-cicd'
-        APP_SERVER = 'ubuntu@YOUR_APP_SERVER_PUBLIC_IP'
+        DOCKERHUB_REPO = 'jayeshk1996/aws-simple-cicd'
+        APP_SERVER = 'ubuntu@15.252.145.119'
     }
 
     triggers {
