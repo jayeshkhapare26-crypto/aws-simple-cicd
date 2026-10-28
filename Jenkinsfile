@@ -93,7 +93,7 @@ pipeline {
                 sh '''
                     curl -fsS --retry 5 --retry-delay 2 \
                       "http://${APP_SERVER#ubuntu@}:8080/" \
-                      | grep -q "My First AWS CI/CD Project"
+                      | grep -q "My First CI/CD Project on AWS"
                 '''
             }
         }
