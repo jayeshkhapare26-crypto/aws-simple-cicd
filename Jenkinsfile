@@ -32,7 +32,7 @@ pipeline {
             steps {
                 sh '''
                     test -s index.html
-                    grep -q "My First AWS CI/CD Project" index.html
+                    grep -q "My First CI/CD Project on AWS" index.html
                 '''
             }
         }
