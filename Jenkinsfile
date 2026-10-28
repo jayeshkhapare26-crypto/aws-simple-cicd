@@ -2,8 +2,10 @@ pipeline {
     agent any
 
     environment {
-        DOCKERHUB_REPO = 'jayeshk1996/aws-simple-cicd'
-        APP_SERVER = 'ubuntu@15.252.145.119'
+        AWS_REGION = 'ap-south-1'
+        AWS_ACCOUNT_ID = '290027677515'
+        ECR_REPOSITORY = 'aws-simple-cicd'
+        APP_SERVER = 'ubuntu@65.1.134.179'
     }
 
     triggers {
@@ -17,41 +19,53 @@ pipeline {
             }
         }
 
-        stage('Test') {
+        stage('Verify AWS Identity') {
             steps {
-                sh 'test -s index.html'
-                sh 'grep -q "My First AWS CI/CD Project" index.html'
-                echo 'Basic application test passed'
+                sh '''
+                    aws --version
+                    aws sts get-caller-identity
+                '''
+            }
+        }
+
+        stage('Test Application') {
+            steps {
+                sh '''
+                    test -s index.html
+                    grep -q "My First AWS CI/CD Project" index.html
+                '''
             }
         }
 
         stage('Build Docker Image') {
             steps {
-                sh 'docker build -t $DOCKERHUB_REPO:$BUILD_NUMBER .'
+                sh '''
+                    set -eu
+                    ECR_URI="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPOSITORY}"
+                    docker build -t "${ECR_URI}:${BUILD_NUMBER}" .
+                '''
             }
         }
 
-        stage('Push Docker Image') {
+        stage('Login and Push to ECR') {
             steps {
-                withCredentials([
-                    usernamePassword(
-                        credentialsId: 'dockerhub-creds',
-                        usernameVariable: 'DOCKER_USER',
-                        passwordVariable: 'DOCKER_TOKEN'
-                    )
-                ]) {
-                    sh '''
-                        set +x
-                        echo "$DOCKER_TOKEN" | docker login \
-                          -u "$DOCKER_USER" --password-stdin
-                        docker push "$DOCKERHUB_REPO:$BUILD_NUMBER"
-                        docker logout
-                    '''
-                }
+                sh '''
+                    set -eu
+                    ECR_URI="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPOSITORY}"
+
+                    aws ecr get-login-password --region "$AWS_REGION" \
+                      | docker login \
+                          --username AWS \
+                          --password-stdin \
+                          "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
+
+                    docker push "${ECR_URI}:${BUILD_NUMBER}"
+                    docker logout "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
+                '''
             }
         }
 
-        stage('Deploy to AWS EC2') {
+        stage('Deploy to App Server') {
             steps {
                 withCredentials([
                     file(
@@ -63,32 +77,34 @@ pipeline {
                         set -eu
                         chmod 600 "$SSH_KEY"
 
-                        ssh -i "$SSH_KEY" \
-                          -o StrictHostKeyChecking=accept-new \
-                          "$APP_SERVER" \
-                          "sudo docker pull $DOCKERHUB_REPO:$BUILD_NUMBER &&
-                           sudo docker rm -f webapp 2>/dev/null || true"
-                    '''
+                        ECR_URI="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPOSITORY}"
 
-                    sh '''
                         ssh -i "$SSH_KEY" \
                           -o StrictHostKeyChecking=accept-new \
                           "$APP_SERVER" \
-                          "sudo docker run -d --name webapp \
-                           --restart unless-stopped -p 8080:80 \
-                           $DOCKERHUB_REPO:$BUILD_NUMBER"
+                          "aws ecr get-login-password --region ${AWS_REGION} | sudo docker login --username AWS --password-stdin ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com && sudo docker pull ${ECR_URI}:${BUILD_NUMBER} && (sudo docker rm -f webapp || true) && sudo docker run -d --name webapp --restart unless-stopped -p 8080:80 ${ECR_URI}:${BUILD_NUMBER}"
                     '''
                 }
+            }
+        }
+
+        stage('Verify Deployment') {
+            steps {
+                sh '''
+                    curl -fsS --retry 5 --retry-delay 2 \
+                      "http://${APP_SERVER#ubuntu@}:8080/" \
+                      | grep -q "My First AWS CI/CD Project"
+                '''
             }
         }
     }
 
     post {
         success {
-            echo 'CI/CD pipeline completed successfully!'
+            echo 'SUCCESS: Image pushed to ECR and deployed to App Server.'
         }
         failure {
-            echo 'Pipeline failed. Check the Jenkins console log.'
+            echo 'FAILED: Check Console Output for the failing stage.'
         }
     }
 }
